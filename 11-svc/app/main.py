@@ -1,31 +1,22 @@
 import logging
+import os
 import sys
-from typing import Sequence
+from typing import List, Optional, Union
 
-from llama_index.core.schema import BaseNode
+from llama_index.core.base.embeddings.base import BaseEmbedding
+from llama_index.core.base.response.schema import RESPONSE_TYPE
+from llama_index.core.data_structs.document_summary import IndexDocumentSummary
+from llama_index.core.llms import LLM
+from llama_index.core.llms.utils import LLMType
+from llama_index.core.schema import TransformComponent, QueryType
+from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
 from qdrant_client import QdrantClient
 
-from llama_index.core import Document, DocumentSummaryIndex, Settings, StorageContext
-from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core import Document, DocumentSummaryIndex, StorageContext, load_index_from_storage
 from llama_index.node_parser.topic import TopicNodeParser
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-
-SHOW_PROGRESS = True
-LLM_MODEL_NAME = "llama3.2:3b"
-COLLECTION_NAME = "summary_coll"
-
-Settings.embed_model = OllamaEmbedding(
-    model_name=LLM_MODEL_NAME,
-    base_url="http://localhost:11434",
-    # ollama_additional_kwargs={"mirostat": 0},
-)
-Settings.llm = Ollama(
-    model=LLM_MODEL_NAME,
-    request_timeout=120.0,
-    context_window=8000,
-) # pydantic_program_mode = PydanticProgramMode.LLM # ???
 
 CONTEXT_TEXT_1 = """
 Peter Pan is a fictional character created by Scottish novelist and playwright J. M. Barrie. 
@@ -47,65 +38,129 @@ Little Red Riding Hood set out immediately.
 As she was going through the wood, she met with a wolf. He asked her where she was going.
 """
 
+class RAGService:
+    COLLECTION_NAME = "summary_coll"
+    TOPIC_NODE_PARSER_SIMILARITY_METHOD="embedding" # | "llm"
+
+    _llm: LLM
+    _embed_model: BaseEmbedding
+    _qdrant_client: QdrantClient
+    _qdrant_vector_store: QdrantVectorStore
+    _storage_context: StorageContext
+    _kw_sum_transformations: List[TransformComponent]
+    _index_struct: IndexDocumentSummary
+    _document_summary_index: DocumentSummaryIndex
+    _persist_dir: str
+    _show_progress: bool
+
+    def __init__(
+            self,
+            llm: LLMType,
+            embed_model: BaseEmbedding,
+            qdrant_client: QdrantClient,
+            persist_dir: Optional[str] = None,
+            recreate_collection: bool = False,
+            show_progress: bool = False):
+
+        self._llm = llm
+        self._embed_model = embed_model
+        self._qdrant_client = qdrant_client
+        self._persist_dir = persist_dir
+        self._show_progress = show_progress
+
+        if recreate_collection and self._qdrant_client.collection_exists(collection_name=self.COLLECTION_NAME):
+            self._qdrant_client.delete_collection(collection_name=self.COLLECTION_NAME)
+
+        self._qdrant_vector_store = QdrantVectorStore(
+            collection_name=self.COLLECTION_NAME,
+            client=self._qdrant_client,
+        )
+        self._storage_context = StorageContext.from_defaults(
+            persist_dir=self._persist_dir,
+            vector_store=self._qdrant_vector_store
+        )
+        self._kw_sum_transformations = [
+            TopicNodeParser.from_defaults(
+                llm=self._llm,
+                embed_model=self._embed_model,
+                similarity_method=self.TOPIC_NODE_PARSER_SIMILARITY_METHOD,
+                window_size=2,
+            ),
+        ]
+        self._index_struct = IndexDocumentSummary()
+        self._document_summary_index = DocumentSummaryIndex(
+            llm=self._llm,
+            embed_model=self._embed_model,
+            index_struct=self._index_struct,
+            transformations=self._kw_sum_transformations,
+            embed_summaries=True,
+            storage_context=self._storage_context,
+            show_progress=self._show_progress,
+        ) if recreate_collection else load_index_from_storage(
+            self._storage_context,
+            llm=self._llm,
+            embed_model=self._embed_model,
+        )
+
+    def insert(
+            self,
+            document: Document):
+        self._document_summary_index.insert(document=document)
+
+    def persist(
+            self,
+            persist_dir: Union[str, os.PathLike]):
+        self._storage_context.persist(persist_dir=persist_dir)
+
+    def query(
+            self,
+            str_or_query_bundle: QueryType) ->RESPONSE_TYPE:
+
+        summary_query_engine = self._document_summary_index.as_query_engine(
+            llm=self._llm,
+            response_mode="tree_summarize"
+        )
+        return summary_query_engine.query(str_or_query_bundle)
+
+
+SHOW_PROGRESS = True
+LLM_MODEL_NAME = "llama3.2:3b"
+RECREATE_COLLECTION = False
+
+
 def main():
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
     print("start")
 
-    client = QdrantClient(host="localhost") # port=6333,
+    llm = Ollama(
+        model=LLM_MODEL_NAME,
+        request_timeout=120.0,
+        context_window=8000,
+    )  # pydantic_program_mode = PydanticProgramMode.LLM # ???
 
-    if client.collection_exists(collection_name=COLLECTION_NAME):
-        client.delete_collection(collection_name=COLLECTION_NAME)
-
-    qdrant_vector_store = QdrantVectorStore(
-        collection_name=COLLECTION_NAME,
-        client=client,
+    embed_model = OllamaEmbedding(
+        model_name=LLM_MODEL_NAME, # base_url="http://localhost:11434", ollama_additional_kwargs={"mirostat": 0},
     )
 
-    kw_sum_transformations = [ # TitleExtractor(nodes=5),
-        TopicNodeParser.from_defaults(
-            # tokenizer=TokenTextSplitter(chunk_size=512, chunk_overlap=128),
-            similarity_method="embedding", # ? "llm"
-            window_size=2,
-        ),
-        # SummaryExtractor(),  # metadata["section_summary"]
-    ]
+    qdrant_client = QdrantClient(host="localhost")  # port=6333,
 
-    pipeline = IngestionPipeline(
-        transformations=kw_sum_transformations,
-        vector_store=qdrant_vector_store,
+    svc = RAGService(
+        llm=llm,
+        embed_model=embed_model,
+        qdrant_client=qdrant_client,
+        persist_dir=None if RECREATE_COLLECTION else DEFAULT_PERSIST_DIR,
+        recreate_collection=RECREATE_COLLECTION,
+        show_progress=SHOW_PROGRESS
     )
-
-    doc1 = Document(text=CONTEXT_TEXT_1)
-    doc2 = Document(text=CONTEXT_TEXT_2)
-    my_docs = [doc1, doc2]
-    extracted_nodes: Sequence[BaseNode] = pipeline.run(
-        documents=my_docs,
-        show_progress=SHOW_PROGRESS,
-    )
-
-    print(f"done running pipeline. nodes: {len(extracted_nodes)}")
-
-    storage_context_summary = StorageContext.from_defaults(vector_store=qdrant_vector_store)
-    #storage_context_summary.docstore.add_documents(extracted_nodes)
-
-    # just save to qdrant
-    document_summary_index = DocumentSummaryIndex(
-        nodes = extracted_nodes,
-        embed_summaries=True,
-        storage_context=storage_context_summary,
-        show_progress=SHOW_PROGRESS,
-    )
-
+    if RECREATE_COLLECTION:
+        svc.insert(Document(text=CONTEXT_TEXT_1))
+        svc.insert(Document(text=CONTEXT_TEXT_2))
+        svc.persist(DEFAULT_PERSIST_DIR)
     print("done document summary indexing")
 
-    summary_query_engine = document_summary_index.as_query_engine(response_mode="tree_summarize")
-    response = summary_query_engine.query("Who created Peter Pan?")
-
-    #summary_query_retriever = document_summary_index.as_retriever() # response_mode="tree_summarize"
-    #response = summary_query_retriever.retrieve("Who created Peter Pan?")
-
+    response = svc.query("Who created Peter Pan?")
     print(response)
 
 if __name__ == "__main__":

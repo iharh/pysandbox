@@ -2,25 +2,19 @@ import logging
 import sys
 from typing import List
 
+from llama_index.core.base.embeddings.base import BaseEmbedding
+from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.data_structs.document_summary import IndexDocumentSummary
 from llama_index.core.llms import LLM
 from llama_index.core.llms.utils import LLMType
-from llama_index.core.schema import TransformComponent
+from llama_index.core.schema import TransformComponent, QueryType
 from qdrant_client import QdrantClient
 
-from llama_index.core import Document, DocumentSummaryIndex, Settings, StorageContext
+from llama_index.core import Document, DocumentSummaryIndex, StorageContext
 from llama_index.node_parser.topic import TopicNodeParser
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-
-SHOW_PROGRESS = True
-LLM_MODEL_NAME = "llama3.2:3b"
-
-Settings.embed_model = OllamaEmbedding(
-    model_name=LLM_MODEL_NAME,
-    base_url="http://localhost:11434", # ollama_additional_kwargs={"mirostat": 0},
-)
 
 CONTEXT_TEXT_1 = """
 Peter Pan is a fictional character created by Scottish novelist and playwright J. M. Barrie. 
@@ -47,6 +41,7 @@ class RAGService:
     TOPIC_NODE_PARSER_SIMILARITY_METHOD="embedding" # | "llm"
 
     _llm: LLM
+    _embed_model: BaseEmbedding
     _qdrant_client: QdrantClient
     _qdrant_vector_store: QdrantVectorStore
     _storage_context: StorageContext
@@ -58,15 +53,19 @@ class RAGService:
     def __init__(
             self,
             llm: LLMType,
+            embed_model: BaseEmbedding,
             qdrant_client: QdrantClient,
             recreate_collection: bool = False,
             show_progress: bool = False):
 
         self._llm = llm
+        self._embed_model = embed_model
         self._qdrant_client = qdrant_client
         self._show_progress = show_progress
+
         if recreate_collection and self._qdrant_client.collection_exists(collection_name=self.COLLECTION_NAME):
             self._qdrant_client.delete_collection(collection_name=self.COLLECTION_NAME)
+
         self._qdrant_vector_store = QdrantVectorStore(
             collection_name=self.COLLECTION_NAME,
             client=self._qdrant_client,
@@ -75,6 +74,7 @@ class RAGService:
         self._kw_sum_transformations = [
             TopicNodeParser.from_defaults(
                 llm=self._llm,
+                embed_model=self._embed_model,
                 similarity_method=self.TOPIC_NODE_PARSER_SIMILARITY_METHOD,
                 window_size=2,
             ),
@@ -82,6 +82,7 @@ class RAGService:
         self._index_struct = IndexDocumentSummary()
         self._document_summary_index = DocumentSummaryIndex(
             llm=self._llm,
+            embed_model=self._embed_model,
             index_struct=self._index_struct,
             transformations=self._kw_sum_transformations,
             embed_summaries=True,
@@ -93,6 +94,21 @@ class RAGService:
             self,
             document: Document):
         self._document_summary_index.insert(document=document)
+
+    def query(
+            self,
+            str_or_query_bundle: QueryType) ->RESPONSE_TYPE:
+
+        summary_query_engine = self._document_summary_index.as_query_engine(
+            llm=self._llm,
+            response_mode="tree_summarize"
+        )
+        return summary_query_engine.query(str_or_query_bundle)
+
+
+SHOW_PROGRESS = True
+LLM_MODEL_NAME = "llama3.2:3b"
+RECREATE_COLLECTION = False
 
 
 def main():
@@ -107,21 +123,27 @@ def main():
         context_window=8000,
     )  # pydantic_program_mode = PydanticProgramMode.LLM # ???
 
+    embed_model = OllamaEmbedding(
+        model_name=LLM_MODEL_NAME,
+        base_url="http://localhost:11434",  # ollama_additional_kwargs={"mirostat": 0},
+    )
+
     qdrant_client = QdrantClient(host="localhost")  # port=6333,
 
     svc = RAGService(
         llm=llm,
+        embed_model=embed_model,
         qdrant_client=qdrant_client,
-        recreate_collection=True,
+        recreate_collection=RECREATE_COLLECTION,
         show_progress=SHOW_PROGRESS
     )
-    svc.insert(Document(text=CONTEXT_TEXT_1))
-    svc.insert(Document(text=CONTEXT_TEXT_2))
+    if RECREATE_COLLECTION:
+        svc.insert(Document(text=CONTEXT_TEXT_1))
+        svc.insert(Document(text=CONTEXT_TEXT_2))
     print("done document summary indexing")
 
-    #summary_query_engine = document_summary_index.as_query_engine(response_mode="tree_summarize")
-    #response = summary_query_engine.query("Who created Peter Pan?")
-    #print(response)
+    response = svc.query("Who created Peter Pan?")
+    print(response)
 
 if __name__ == "__main__":
     main()
