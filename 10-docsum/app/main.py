@@ -59,11 +59,14 @@ class RAGService:
             self,
             llm: LLMType,
             qdrant_client: QdrantClient,
-            show_progress: bool):
+            recreate_collection: bool = False,
+            show_progress: bool = False):
 
         self._llm = llm
         self._qdrant_client = qdrant_client
         self._show_progress = show_progress
+        if recreate_collection and self._qdrant_client.collection_exists(collection_name=self.COLLECTION_NAME):
+            self._qdrant_client.delete_collection(collection_name=self.COLLECTION_NAME)
         self._qdrant_vector_store = QdrantVectorStore(
             collection_name=self.COLLECTION_NAME,
             client=self._qdrant_client,
@@ -85,11 +88,6 @@ class RAGService:
             storage_context=self._storage_context,
             show_progress=self._show_progress,
         )
-
-    def recreate_collection(self):
-        if self._qdrant_client.collection_exists(collection_name=self.COLLECTION_NAME):
-            self._qdrant_client.delete_collection(collection_name=self.COLLECTION_NAME)
-        self._qdrant_client.create_collection(collection_name=self.COLLECTION_NAME)
 
     def insert(
             self,
@@ -114,9 +112,9 @@ def main():
     svc = RAGService(
         llm=llm,
         qdrant_client=qdrant_client,
+        recreate_collection=True,
         show_progress=SHOW_PROGRESS
     )
-    svc.recreate_collection()
     svc.insert(Document(text=CONTEXT_TEXT_1))
     svc.insert(Document(text=CONTEXT_TEXT_2))
     print("done document summary indexing")
