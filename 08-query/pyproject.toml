@@ -1,0 +1,11 @@
+[project]
+name = "08-query"
+version = "0.1.0"
+description = "query"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "llama-index-embeddings-ollama>=0.6.0",
+    "llama-index-llms-ollama>=0.6.2",
+    "llama-index-vector-stores-qdrant>=0.6.1",
+]

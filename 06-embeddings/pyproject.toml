@@ -1,0 +1,10 @@
+[project]
+name = "06-embeddings"
+version = "0.1.0"
+description = "ollama embeddings"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "llama-index-embeddings-ollama>=0.6.0",
+    "llama-index-llms-ollama>=0.6.2",
+]

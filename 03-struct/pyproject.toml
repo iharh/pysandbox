@@ -1,0 +1,9 @@
+[project]
+name = "struct"
+version = "0.1.0"
+description = "Structured output"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "llama-index-llms-ollama>=0.6.2",
+]

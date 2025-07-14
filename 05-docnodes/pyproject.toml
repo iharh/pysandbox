@@ -1,0 +1,9 @@
+[project]
+name = "05-docnodes"
+version = "0.1.0"
+description = "documents and nodes"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "llama-index-llms-ollama>=0.6.2",
+]
