@@ -1,7 +1,6 @@
 vec/in
 vec/out
 **/.venv
-**/uv.lock
 **/dist
 **/fapi.egg-info
 **/*.egg-info/

@@ -1,0 +1,16 @@
+[project]
+name = "13-rest"
+version = "0.1.0"
+description = "rest"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.1",
+    "fastapi-utils>=0.8.0",
+    "llama-index-embeddings-ollama>=0.6.0",
+    "llama-index-llms-ollama>=0.6.2",
+    "llama-index-node-parser-topic>=0.2.0",
+    "llama-index-readers-web>=0.4.4",
+    "llama-index-vector-stores-qdrant>=0.6.1",
+    "uvicorn>=0.35.0",
+]
