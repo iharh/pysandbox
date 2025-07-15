@@ -1,0 +1,40 @@
+services:
+  # REST API: localhost:6333
+  # Web  UI : localhost:6333/dashboard
+  # GRPC API: localhost:6334
+  qdrant:
+    image: qdrant/qdrant:v1.14.1-unprivileged
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges=true"
+      - "seccomp=unconfined"
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges=true"
+      - "seccomp=unconfined"
+  
+  # llama3.2:3b
+  # https://itsfoss.com/ollama-docker/
+  # docker exec -it ollama <commands>
+  # docker exec -it ollama ollama run llama2
+
+volumes:
+  ollama:
+
+networks:
+  rag:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
